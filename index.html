@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Detector de colores y Pantone (Offline)</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#7c3aed}
+    *{box-sizing:border-box;font-family:Inter,ui-sans-serif,system-ui,Arial,Helvetica,sans-serif}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071028 0%, #071829 100%);color:#e6eef8}
+    .wrap{max-width:1200px;margin:28px auto;padding:20px;display:grid;grid-template-columns:360px 1fr;gap:20px}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);border:1px solid rgba(255,255,255,0.04);padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,0.6)}
+    h1{margin:0 0 10px;font-size:18px}
+    .controls{display:flex;flex-direction:column;gap:12px}
+    label{font-size:13px;color:var(--muted)}
+    input[type=text]{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+    .row{display:flex;gap:8px}
+    button{padding:10px 12px;border-radius:8px;border:0;background:linear-gradient(90deg,var(--accent),#4f46e5);color:white;cursor:pointer}
+    .small{font-size:13px;color:var(--muted)}
+    #swatches{margin-top:12px;display:flex;flex-direction:column;gap:10px}
+    .swatch{display:flex;align-items:center;gap:12px;padding:8px;border-radius:10px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.02)}
+    .swatch .color{width:48px;height:48px;border-radius:8px;flex-shrink:0}
+    .swatch .meta{display:flex;flex-direction:column}
+    .meta .hex{font-weight:700}
+    .meta .sub{font-size:13px;color:var(--muted)}
+    /* main area */
+    .main-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .preview{display:flex;gap:18px;align-items:flex-start}
+    #previewImage{max-width:640px;max-height:520px;border-radius:10px;border:1px solid rgba(255,255,255,0.04);object-fit:contain;background:#081225}
+    .info{flex:1}
+    .settings{display:flex;gap:8px;align-items:center}
+    .muted{color:var(--muted);font-size:13px}
+    footer{margin-top:12px;color:var(--muted);font-size:13px}
+    .badge{background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.02);font-size:13px}
+    .hint{font-size:12px;color:#9fb0c8}
+    /* responsive */
+    @media (max-width:900px){.wrap{grid-template-columns:1fr;padding:14px} .preview{flex-direction:column} #previewImage{max-width:100%}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Detector de colores — Panel</h1>
+      <div class="controls">
+        <div>
+          <label class="small">Subir imagen (archivo)</label>
+          <input id="fileInput" type="file" accept="image/*">
+        </div>
+        <div>
+          <label class="small">O pegar URL de imagen (CORS puede bloquear algunas URLs)</label>
+          <div class="row">
+            <input id="urlInput" type="text" placeholder="https://example.com/imagen.jpg">
+            <button id="loadUrlBtn">Cargar</button>
+          </div>
+          <div class="hint">Si la URL da error por CORS prueba con otra fuente o usa una proxy pública.</div>
+        </div>
+        <div class="row">
+          <div style="flex:1">
+            <label class="small">Número de colores a detectar</label>
+            <input id="numColors" type="text" value="6">
+          </div>
+          <div style="width:120px">
+            <label class="small">Muestreo (%)</label>
+            <input id="samplePct" type="text" value="30">
+            <div class="small muted">Porcentaje de píxeles usados para cluster (más → más lento)</div>
+          </div>
+        </div>
+        <div class="row">
+          <button id="analyzeBtn">Analizar imagen</button>
+          <button id="clearBtn" style="background:transparent;border:1px solid rgba(255,255,255,0.05)">Limpiar</button>
+        </div>
+        <div id="swatches" aria-live="polite"></div>
+        <footer>
+          <div class="muted">Resultados aproximados. Pantone mostrado es la aproximación más cercana dentro de una paleta predefinida.</div>
+        </footer>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="main-top">
+        <div>
+          <h1>Vista previa & resultados</h1>
+          <div class="muted">Arriba se muestran los porcentajes y la aproximación Pantone al color más cercano.</div>
+        </div>
+        <div class="badge">Exportar: Copiar hex → usa el botón al lado del color</div>
+      </div>
+
+      <div class="preview" style="margin-top:12px">
+        <div class="info">
+          <img id="previewImage" alt="Preview" src="" />
+          <canvas id="hiddenCanvas" style="display:none"></canvas>
+        </div>
+        <div style="min-width:200px">
+          <div class="card" style="padding:12px;margin:0;">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div class="small">Dominantes detectados</div>
+                <div id="dominantMain" style="font-weight:700;font-size:18px;margin-top:6px">—</div>
+              </div>
+              <div>
+                <div class="small">Tiempo</div>
+                <div id="elapsed" style="font-weight:700">—</div>
+              </div>
+            </div>
+            <hr style="margin:10px 0;border:none;border-top:1px solid rgba(255,255,255,0.03)">
+            <div class="small muted">Consejos:</div>
+            <ul class="small muted">
+              <li>Si la imagen no carga por URL, prueba subir el archivo.</li>
+              <li>Ajusta el número de colores y el muestreo para mayor precisión.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // Utility: convert rgb to hex
+    function rgbToHex(r,g,b){
+      return '#'+[r,g,b].map(x=>{
+        const s = Number(x).toString(16);
+        return s.length===1?'0'+s:s;
+      }).join('').toUpperCase();
+    }
+
+    // Basic k-means clustering for colors (client-side)
+    function kMeans(pixels, k, maxIter=12){
+      if(pixels.length === 0) return [];
+      // initialize centers randomly from pixels
+      const centers = [];
+      const used = new Set();
+      while(centers.length < k && centers.length < pixels.length){
+        const idx = Math.floor(Math.random()*pixels.length);
+        if(!used.has(idx)){ centers.push(pixels[idx].slice()); used.add(idx); }
+      }
+      let clusters = new Array(centers.length).fill(0).map(()=>[]);
+      for(let iter=0;iter<maxIter;iter++){
+        clusters = new Array(centers.length).fill(0).map(()=>[]);
+        for(const p of pixels){
+          let best = 0; let bd = Infinity;
+          for(let c=0;c<centers.length;c++){
+            const d = (p[0]-centers[c][0])**2 + (p[1]-centers[c][1])**2 + (p[2]-centers[c][2])**2;
+            if(d<bd){bd=d;best=c}
+          }
+          clusters[best].push(p);
+        }
+        let moved = false;
+        for(let c=0;c<centers.length;c++){
+          if(clusters[c].length===0) continue;
+          const sum = clusters[c].reduce((acc,p)=>[acc[0]+p[0],acc[1]+p[1],acc[2]+p[2]],[0,0,0]);
+          const mean = [Math.round(sum[0]/clusters[c].length),Math.round(sum[1]/clusters[c].length),Math.round(sum[2]/clusters[c].length)];
+          if(mean[0]!==centers[c][0] || mean[1]!==centers[c][1] || mean[2]!==centers[c][2]){
+            centers[c] = mean; moved = true;
+          }
+        }
+        if(!moved) break;
+      }
+      // produce results with counts
+      const results = centers.map((c,idx)=>({rgb:c,count:clusters[idx].length})).filter(r=>r.count>0);
+      return results;
+    }
+
+    // Predefined small Pantone-ish palette (approx hex values) — NOT exhaustive, used for approximation only
+    const PANTONE_PALETTE = [
+      {code:'PANTONE 186 C', hex:'#C8102E'},
+      {code:'PANTONE 185 C', hex:'#D6282F'},
+      {code:'PANTONE 1865 C', hex:'#B21F2D'},
+      {code:'PANTONE 287 C', hex:'#0033A0'},
+      {code:'PANTONE 286 C', hex:'#0033A0'},
+      {code:'PANTONE 300 C', hex:'#005EB8'},
+      {code:'PANTONE 299 C', hex:'#00A3E0'},
+      {code:'PANTONE 165 C', hex:'#FF671F'},
+      {code:'PANTONE 137 C', hex:'#FF5E00'},
+      {code:'PANTONE 123 C', hex:'#FFC600'},
+      {code:'PANTONE 116 C', hex:'#FFB300'},
+      {code:'PANTONE 347 C', hex:'#009639'},
+      {code:'PANTONE 354 C', hex:'#78BE20'},
+      {code:'PANTONE  Black C', hex:'#2D2D2D'},
+      {code:'PANTONE Cool Gray 7 C', hex:'#97999B'},
+      {code:'PANTONE 7527 C', hex:'#BFA5A0'},
+      {code:'PANTONE 189 C', hex:'#D43C59'},
+      {code:'PANTONE 2597 C', hex:'#582C83'},
+      {code:'PANTONE 2728 C', hex:'#5B5EA6'},
+      {code:'PANTONE 3288 C', hex:'#009E9E'},
+      {code:'PANTONE 7417 C', hex:'#FF6F61'},
+      {code:'PANTONE 200 C', hex:'#BA0C2F'},
+      {code:'PANTONE 7549 C', hex:'#E6E6E2'}
+    ];
+
+    function hexToRgb(hex){
+      const v = hex.replace('#','');
+      return [parseInt(v.substring(0,2),16),parseInt(v.substring(2,4),16),parseInt(v.substring(4,6),16)];
+    }
+    const PANTONE_RGB = PANTONE_PALETTE.map(p=>({code:p.code,hex:p.hex,rgb:hexToRgb(p.hex)}));
+
+    function nearestPantone(rgb){
+      let best=null; let bd=Infinity;
+      for(const p of PANTONE_RGB){
+        const d = (rgb[0]-p.rgb[0])**2 + (rgb[1]-p.rgb[1])**2 + (rgb[2]-p.rgb[2])**2;
+        if(d<bd){bd=d;best=p}
+      }
+      return best;
+    }
+
+    // Main logic
+    const fileInput = document.getElementById('fileInput');
+    const urlInput = document.getElementById('urlInput');
+    const loadUrlBtn = document.getElementById('loadUrlBtn');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const previewImage = document.getElementById('previewImage');
+    const hiddenCanvas = document.getElementById('hiddenCanvas');
+    const swatches = document.getElementById('swatches');
+    const dominantMain = document.getElementById('dominantMain');
+    const elapsed = document.getElementById('elapsed');
+
+    let currentImage = null;
+
+    function reset(){
+      previewImage.src=''; swatches.innerHTML=''; dominantMain.textContent='—'; elapsed.textContent='—'; currentImage=null;
+    }
+
+    clearBtn.addEventListener('click',()=>{reset(); fileInput.value=''; urlInput.value='';});
+
+    fileInput.addEventListener('change', e=>{
+      const f = e.target.files && e.target.files[0];
+      if(!f) return;
+      const url = URL.createObjectURL(f);
+      loadImage(url,true);
+    });
+
+    loadUrlBtn.addEventListener('click', ()=>{
+      const u = urlInput.value.trim(); if(!u) return alert('Pega una URL válida');
+      loadImage(u,false);
+    });
+
+    function loadImage(src, isBlob){
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = ()=>{
+        currentImage = img;
+        previewImage.src = src;
+      };
+      img.onerror = (err)=>{
+        alert('No se pudo cargar la imagen. Es probable que la URL bloquee CORS. Prueba subiéndola o usando otro origen.');
+        console.error('img error',err);
+      }
+      img.src = src;
+    }
+
+    analyzeBtn.addEventListener('click', ()=>{
+      if(!currentImage){ alert('Carga primero una imagen (archivo o URL).'); return; }
+      const num = Math.max(1,Math.min(24,parseInt(document.getElementById('numColors').value||6)));
+      const samplePct = Math.max(1,Math.min(100,parseInt(document.getElementById('samplePct').value||30)));
+      analyzeImage(currentImage,num,samplePct);
+    });
+
+    function analyzeImage(img,k,samplePct){
+      const t0 = performance.now();
+      const canvas = hiddenCanvas; const ctx = canvas.getContext('2d');
+      // downscale for speed
+      const maxDim = 800;
+      let w = img.naturalWidth; let h = img.naturalHeight;
+      const ratio = Math.min(1, maxDim / Math.max(w,h));
+      w = Math.max(1, Math.round(w*ratio)); h = Math.max(1, Math.round(h*ratio));
+      canvas.width = w; canvas.height = h;
+      ctx.clearRect(0,0,w,h);
+      ctx.drawImage(img,0,0,w,h);
+      try{
+        const imageData = ctx.getImageData(0,0,w,h);
+        const data = imageData.data;
+        const totalPixels = w*h;
+        const step = Math.max(1, Math.floor(100/samplePct));
+        const pixels = [];
+        // sample pixels with step to limit computation
+        for(let y=0;y<h;y+=1){
+          for(let x=0;x<w;x+=step){
+            const idx = (y*w + x)*4;
+            const r = data[idx], g = data[idx+1], b = data[idx+2], a = data[idx+3];
+            if(a<125) continue; // ignore mostly transparent
+            // optional: ignore near-white or near-black? we'll include all
+            pixels.push([r,g,b]);
+          }
+        }
+        // run kMeans
+        const clusters = kMeans(pixels,k,12);
+        // compute totals
+        const counts = clusters.map(c=>c.count);
+        const sumCounts = counts.reduce((a,b)=>a+b,0);
+        const results = clusters.map(c=>({rgb:c.rgb,count:c.count,hex:rgbToHex(c.rgb[0],c.rgb[1],c.rgb[2]),percent: (c.count/sumCounts)*100}));
+        results.sort((a,b)=>b.percent - a.percent);
+        // display
+        swatches.innerHTML='';
+        for(const r of results){
+          const pant = nearestPantone(r.rgb);
+          const sw = document.createElement('div'); sw.className='swatch';
+          const colorBox = document.createElement('div'); colorBox.className='color'; colorBox.style.background = r.hex;
+          const meta = document.createElement('div'); meta.className='meta';
+          const hexEl = document.createElement('div'); hexEl.className='hex'; hexEl.textContent = r.hex + '   ' + Math.round((r.percent+Number.EPSILON)*100)/100 + '%';
+          const subEl = document.createElement('div'); subEl.className='sub'; subEl.innerHTML = 'RGB: '+r.rgb.join(', ') + ' • Pantone aprox: <b>'+pant.code+'</b> ('+pant.hex+')';
+          const copyBtn = document.createElement('button'); copyBtn.textContent='Copiar HEX'; copyBtn.style.marginLeft='auto'; copyBtn.addEventListener('click',()=>{
+            navigator.clipboard.writeText(r.hex).then(()=>{copyBtn.textContent='Copiado!'; setTimeout(()=>copyBtn.textContent='Copiar HEX',900);});
+          });
+          meta.appendChild(hexEl); meta.appendChild(subEl);
+          sw.appendChild(colorBox); sw.appendChild(meta); sw.appendChild(copyBtn);
+          swatches.appendChild(sw);
+        }
+        dominantMain.textContent = results.length? results[0].hex + ' — ' + Math.round((results[0].percent+Number.EPSILON)*100)/100 + '%':'—';
+        const t1 = performance.now(); elapsed.textContent = Math.round(t1-t0) + ' ms';
+      }catch(err){
+        console.error(err); alert('Error al leer los datos de la imagen (probablemente CORS). Intenta subir el archivo localmente.');
+      }
+    }
+
+    // Small accessibility: allow pressing Enter on URL box
+    urlInput.addEventListener('keydown',(e)=>{ if(e.key === 'Enter'){ loadUrlBtn.click(); } });
+  </script>
+</body>
+</html>
